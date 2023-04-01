@@ -1,0 +1,29 @@
+For example, drop support trendline by low prices of bars.
+
+In each iteration:
+1. if all points are lined up in sequence - for true, complete
+2. else, check if only two points - for true, complete
+3. else, check if only three points - see three points
+4. else:
+-- keep only low points, which are lower than both previous or next point.
+---- for the first point, it compares only to the next point
+---- for the last point, it compares only to the previous point
+
+three points:
+in this case, the the points for sure not lined up in sequence.
+- if middle point is high, continue to iterate
+- if middle point is low
+--- check if the middle point has many bars (like >50%) away from the first or last bar
+----- if true, keep only the middle point and the far away bar.
+----- if no such result, return null
+
+After iteration
+
+- if only two points
+--- if the two points are too close - return null
+--- else: return the time and price of the two points
+- else (more than two points lined up in order):
+--- can use linear regression
+--- alternatively, use mean and std to filter out outliers, then return the first and last point
+
+
