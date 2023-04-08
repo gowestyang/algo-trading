@@ -1,15 +1,20 @@
+# backtrader-py38
+
 ipykernel
+black
 
 numpy
 pandas
+pyarrow
+
 scikit-learn
 
 #backtrader-lucidinvestor
 backtrader
 backtrader-bokeh
 
-nbformat
-plotly
 backtrader-plotly
+plotly
+nbformat
 
 oandapyV20
