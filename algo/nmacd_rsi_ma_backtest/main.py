@@ -1,39 +1,17 @@
 import os
 import pandas as pd
 from datetime import datetime
+from src.defs import PRICE_DIGITS
 from src.utils import logger, load_oanda_parquet
+from src.notifications import log_order, log_trade
 
 # from backtrader_bokeh import bt
 import backtrader as bt
 
-os.environ["BOKEH_ALLOW_WS_ORIGIN"] = "0lj9hh483va927cadklatiu5affjj5cn3b349he4cl71d36qc4p6"
-
 logger.setLevel(10)  # debug
 
-DATA_FILE = "oanda_EUR_USD_H1_2022-12-19_2022-12-31.parquet.gz"
-
-df = load_oanda_parquet(DATA_FILE)
-
-data = bt.feeds.PandasData(
-    dataname=df,
-    name="EUR_USD_H1",
-)
-
-
-class RSI_MA(bt.Indicator):
-    params = (
-        ("period", 14),
-        ("ma_period", 10),
-    )
-    lines = ("rsi", "rsi_ma")
-    plotinfo = dict(subplot=True, plotlinelabels=True, plotmaster=bt.indicators.RSI())
-    plotlines = dict(rsi=dict(ls="-", linewidth=1.5), rsi_ma=dict(ls="--", linewidth=1.5))
-
-    def __init__(self):
-        self.lines.rsi = bt.indicators.RSI(period=self.params.period)
-        self.lines.ma_rsi = bt.indicators.SimpleMovingAverage(
-            self.lines.rsi, period=self.params.ma_period, plotforce=True
-        )
+INSTRUMENT = "EUR_USD"
+DIGITS = PRICE_DIGITS[INSTRUMENT]
 
 
 class MyStrategy(bt.Strategy):
@@ -57,49 +35,52 @@ class MyStrategy(bt.Strategy):
             period_me2=self.params.macd_slow_period,
             period_signal=self.params.macd_signal_period,
         )
-        self.macd_crossover = bt.indicators.CrossOver(
-            self.macd.macd, self.macd.signal, plot=False
-        )  # 0: no cross-over | 1: cross-up | -1 : cross-down
-        # self.macd_norm = bt.indicators.NormalizedMovingAverage(self.macd.histo, period=self.params.macd_normalize_period)
 
-        self.rsi = RSI_MA(period=self.params.rsi_period, ma_period=self.params.rsi_ma_period)
-        # self.rsi = bt.indicators.RSI(period=self.params.rsi_period)
-        # self.rsi_ma = bt.indicators.SimpleMovingAverage(self.rsi, period=self.params.rsi_ma_period)
-        # self.rsi_crossover = bt.indicators.CrossOver(self.rsi, self.rsi_ma) # 0: no cross-over | 1: cross-up | -1 : cross-down
+        self.rsi = bt.indicators.RSI(period=self.params.rsi_period)
+        self.rsi_ma = bt.indicators.SimpleMovingAverage(self.rsi, period=self.params.rsi_ma_period)
+        self.rsi_ma.plotinfo.plotmaster = self.rsi
 
         self.atr = bt.indicators.AverageTrueRange(period=self.params.atr_period)
 
         # signals
+        self.macd_crossover = bt.indicators.CrossOver(
+            self.macd.macd, self.macd.signal, plot=False
+        )  # 0: no cross-over | 1: cross-up | -1 : cross-down
+        self.rsi_crossover = bt.indicators.CrossOver(
+            self.rsi, self.rsi_ma, plot=False
+        )  # 0: no cross-over | 1: cross-up | -1 : cross-down
         self.sig_macd_cross = 0  # 0: no signal | 1: cross above | -1: cross below
         self.signal = 0  # 0: no signal | 1: long | -1: short
 
+        # prices
+        self.stop_loss = None
+        self.take_profit = None
+
+        # others
+        self.close_price = None
         self.order = None
-        self.buyprice = None
-        self.buycomm = None
 
     def update_signal(self):
-        if self.macd_crossover[0] in (-1, 1):
+        if self.macd_crossover[0] != 0:
             self.sig_macd_cross = self.macd_crossover[0]
 
         if self.sig_macd_cross == 1:
-            # if (self.rsi_crossover[0]==1) & (self.data.close[0] > self.sma[0]):
-            if self.data.close[0] > self.sma[0]:
+            if (self.rsi_crossover[0] == 1) & (self.data.close[0] > self.sma[0]):
                 self.signal = 1
             else:
                 self.signal = 0
 
         if self.sig_macd_cross == -1:
-            # if (self.rsi_crossover[0]==-1) & (self.data.close[0] < self.sma[0]):
-            if self.data.close[0] < self.sma[0]:
+            if (self.rsi_crossover[0] == -1) & (self.data.close[0] < self.sma[0]):
                 self.signal = -1
             else:
                 self.signal = 0
 
     def next(self):
-        #### troubleshootgin ####
+        #### trouble shooting ####
         # global g1
-        # g1 = self.rsi
-        # self.log(f"macd_crossover = {self.macd_crossover[0]}")
+        # g1 = self.atr
+        # self.log(self.atr[0])
         ####
 
         # if there is a pending order, do not send a 2nd one
@@ -109,71 +90,84 @@ class MyStrategy(bt.Strategy):
         # update signal
         self.update_signal()
 
-        if self.signal != 0:
-            self.log({f"signal = {self.signal}"})
-
         # apply signal if not in position
         if not self.position:
-            if self.data.close[0] > self.sma[0]:
-                self.log(f"BUY CREATE, {self.data.close[0]:.6f}")
-                self.order = self.buy()
+            if self.signal == 1:
+                self.log(f"BUY MKT ORDER TRIGGERED.")
+                self.stop_loss = round(self.data.close[0] - self.atr[0], DIGITS)
+                self.take_profit = round(self.data.close[0] + self.atr[0], DIGITS)
+                self.order = self.buy_bracket(
+                    size=None,
+                    exectype=bt.Order.Market,
+                    stopprice=self.stop_loss,
+                    stopexec=bt.Order.Stop,
+                    limitprice=self.take_profit,
+                    limitexec=bt.Order.Limit,
+                )
+            if self.signal == -1:
+                self.log(f"SELL MKT ORDER TRIGGERED.")
+                self.stop_loss = round(self.data.close[0] + self.atr[0], DIGITS)
+                self.take_profit = round(self.data.close[0] - self.atr[0], DIGITS)
+                self.order = self.sell_bracket(
+                    size=None,
+                    exectype=bt.Order.Market,
+                    stopprice=self.stop_loss,
+                    stopexec=bt.Order.Stop,
+                    limitprice=self.take_profit,
+                    limitexec=bt.Order.Limit,
+                )
 
-        else:
-            if self.data.close[0] < self.sma[0]:
-                self.log(f"SELL CREATE, {self.data.close[0]:.6f}")
-                self.order = self.sell()
+    def notify_order(self, order: bt.order.Order) -> None:
+        log_order(order=order, digits=DIGITS, log_func=self.log)
 
-    def notify_order(self, order: bt.order.Order):
-        if order.status in [order.Submitted, order.Accepted]:
-            return
+        # no pending order unless partially filled
+        if order.status != order.Partial:
+            self.order = None
 
-        if order.status in [order.Completed]:
-            if order.isbuy():
-                self.log_order(order)
-                self.buyprice = order.executed.price
-                self.buycomm = order.executed.comm
-            elif order.issell():
-                self.log_order(order)
+    def notify_trade(self, trade: bt.trade.Trade) -> None:
+        log_trade(trade=trade, digits=DIGITS, log_func=self.log)
 
-            self.bar_executed = len(self)
-
-        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
-            self.log("Order Canceled/Margin/Rejected")
-
-        # Write down: no pending order
-        self.order = None
-
-    def notify_trade(self, trade: bt.trade.Trade):
-        if not trade.isclosed:
-            return
-        self.log(f"OPERATION PROFIT, Gross {trade.pnl:.2f}, Net {trade.pnlcomm:.2f}")
-
-    def log(self, txt):
-        dt = self.data.datetime.datetime(0)
-        print(f"{dt.strftime('%Y-%m-%d %H:%M:%S')}, {txt}")
-
-    def log_order(self, order: bt.order.Order):
-        direction = "BUY" if order.isbuy() else "SELL"
+    def start(self):
         self.log(
-            f"{direction} EXECUTED, Size: {order.executed.size}, Price: {order.executed.price:.2f}, Cost: {order.executed.value}, Comm: {order.executed.comm:.2f}"
+            f"STRATEGY START. value = {round(self.broker.getvalue(), DIGITS)}, cash = {round(self.broker.getcash(), DIGITS)}.",
+            with_dt=False,
         )
 
+    def stop(self):
+        self.log(
+            f"STRATEGY COMPLETE. value = {round(self.broker.getvalue(), DIGITS)}, cash = {round(self.broker.getcash(), DIGITS)}."
+        )
 
+    def log(self, txt, with_dt=True):
+        if with_dt:
+            dt = self.data.datetime.datetime(0)
+            txt = f"[{dt.strftime('%Y-%m-%d %H:%M:%S')}] {txt}"
+        print(txt)
+
+
+DATA_FILE = "oanda_EUR_USD_H1_2022-12-19_2022-12-31.parquet.gz"
+
+# initialize
 cerebro = bt.Cerebro()
+cerebro.broker.setcash(1000)
+cerebro.broker.setcommission(commission=0.0)
+
+# add data
+df = load_oanda_parquet(DATA_FILE)
+
+data = bt.feeds.PandasData(
+    dataname=df,
+    name="EUR_USD_H1",
+)
 
 cerebro.adddata(data)
 
+# add strategy
 cerebro.addstrategy(MyStrategy)
 
-cerebro.broker.setcash(1000)
-print("Starting Portfolio Value: %.2f" % cerebro.broker.getvalue())
-
+# add sizer
 cerebro.addsizer(bt.sizers.FixedSize, stake=10)
-
-cerebro.broker.setcommission(commission=0.0)
 
 cerebro.run()
 
-print("Final Portfolio Value: %.2f" % cerebro.broker.getvalue())
-
-cerebro.plot()
+cerebro.plot(style="candles", barup="green", bardown="red")

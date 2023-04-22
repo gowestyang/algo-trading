@@ -1,4 +1,3 @@
-from typing import Tuple
 import logging
 import pandas as pd
 
@@ -9,7 +8,7 @@ logging.basicConfig(format=LOGGING_FORMAT, level=LOGGING_LEVEL)
 logger = logging.getLogger(__name__)
 
 
-def load_oanda_parquet(file:str, start_time:str=None, end_time:str=None) -> Tuple[pd.DataFrame]:
+def load_oanda_parquet(file: str, start_time: str = None, end_time: str = None) -> pd.DataFrame:
     """Load saved OANDA parquest"""
 
     INPUT_COLS = ["time", "volume", "bid_o", "bid_h", "bid_l", "bid_c", "ask_o", "ask_h", "ask_l", "ask_c"]
@@ -19,7 +18,7 @@ def load_oanda_parquet(file:str, start_time:str=None, end_time:str=None) -> Tupl
     # verify columns
     missing_cols = [c for c in INPUT_COLS if c not in df.columns]
     if len(missing_cols) > 0:
-        logger.error(f"Missing columns: {missing_cols}.")
+        raise LookupError(f"Missing columns: {missing_cols}.")
 
     df["datetime"] = pd.to_datetime(df["time"])
 
@@ -37,6 +36,10 @@ def load_oanda_parquet(file:str, start_time:str=None, end_time:str=None) -> Tupl
     cols = ["datetime", "open", "high", "low", "close", "volume"]
     df = df[cols].copy()
     logger.debug(f"Loaded data has {len(df)} rows, from {df['datetime'].min()} to {df['datetime'].max()}.")
-    df = df[cols].copy().set_index("datetime", verify_integrity=True)
+
+    df = df.set_index("datetime", verify_integrity=True)
 
     return df
+
+
+
