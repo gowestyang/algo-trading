@@ -33,7 +33,7 @@ def log_order(order: bt.order.Order, digits=5, log_func=print) -> None:
     if order.status == order.Accepted:
         log_func(
             f"{direction} {order_type} ORDER ACCEPTED: "
-            f"price = {order.created.price}, size = {abs(order.created.size)}."
+            f"price = {order.created.price}, size = {abs(order.created.size)}, margin = {order.created.margin}."
         )
 
     elif order.status in [order.Partial, order.Completed]:
@@ -46,7 +46,7 @@ def log_order(order: bt.order.Order, digits=5, log_func=print) -> None:
             f"{direction} {order_type} ORDER {partial}EXECUTED: "
             f"order_price = {round(order.created.price, digits)}, execute_price = {round(order.executed.price, digits)}, slippage = {slippage} %%, "
             f"size = {abs(order.executed.size)}, value = {value}, "
-            f"commission = {order.executed.comm}."
+            f"margin = {order.executed.margin}, commission = {round(order.executed.comm, digits)}."
         )
 
     elif order.status == order.Cancelled:
