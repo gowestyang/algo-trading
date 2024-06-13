@@ -31,8 +31,8 @@ class MyStrategy(bt.Strategy):
         ("ma_period", 13),
         ("high_low_period", 8),
         # ('atr_period', 115),
-        ("rrr", 1),  # reward-risk-ratio
-        ("sl_pct", 0.2),  # stop-loss pct
+        ("rrr", 1),  # reward-risk-ratio = take-profit-distance / stop-loss-distance
+        ("sl_pct", 1),  # stop-loss pct = stop-loss-amount / total-cash-amount
     )
 
     def __init__(self):
